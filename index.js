@@ -48,25 +48,97 @@ app.get('/auth', (req, res) => {
         <html>
         <head>
             <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-                body { background:#2f3136; color:white; text-align:center; font-family:sans-serif; padding-top:100px; }
-                .box { background:#36393f; display:inline-block; padding:40px; border-radius:10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-                button { background:#5865f2; color:white; padding:15px 40px; border:none; border-radius:5px; cursor:pointer; font-weight:bold; font-size:16px; }
-                .loading { color: #faa61a; font-weight: bold; margin: 20px; }
+                :root {
+                    --bg-color: #23272a;
+                    --card-bg: #2c2f33;
+                    --discord-blurple: #5865f2;
+                    --success: #43b581;
+                    --warning: #faa61a;
+                    --danger: #f04747;
+                    --text: #ffffff;
+                }
+
+                body { 
+                    background-color: var(--bg-color); 
+                    color: var(--text); 
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    overflow: hidden;
+                }
+
+                .box { 
+                    background: var(--card-bg); 
+                    padding: 50px; 
+                    border-radius: 16px; 
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.6); 
+                    max-width: 450px;
+                    width: 90%;
+                    text-align: center;
+                    border: 1px solid rgba(255,255,255,0.05);
+                    transition: all 0.3s ease;
+                }
+
+                h2 { margin-bottom: 10px; font-size: 28px; }
+                p { color: #b9bbbe; margin-bottom: 30px; line-height: 1.5; }
+
+                button { 
+                    background: var(--discord-blurple); 
+                    color: white; 
+                    padding: 16px 40px; 
+                    border: none; 
+                    border-radius: 8px; 
+                    cursor: pointer; 
+                    font-weight: bold; 
+                    font-size: 18px;
+                    width: 100%;
+                    transition: transform 0.2s, background 0.2s;
+                    box-shadow: 0 4px 15px rgba(88, 101, 242, 0.3);
+                }
+
+                button:hover { 
+                    background: #4752c4; 
+                    transform: translateY(-2px);
+                }
+
+                button:active { transform: translateY(0); }
+
+                /* Animacja ładowania */
+                .spinner {
+                    width: 50px;
+                    height: 50px;
+                    border: 5px solid rgba(255,255,255,0.1);
+                    border-top: 5px solid var(--discord-blurple);
+                    border-radius: 50%;
+                    animation: spin 1s linear infinite;
+                    margin: 20px auto;
+                }
+
+                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+                .status-icon { font-size: 60px; margin-bottom: 20px; }
             </style>
         </head>
         <body>
             <div class="box">
-                <h2>🛡️ Weryfikacja Konta</h2>
                 <div id="content">
-                    <p>Potwierdź, że nie jesteś robotem.</p>
-                    <button id="vBtn">ROZPOCZNIJ WERYFIKACJĘ</button>
+                    <div class="status-icon">🛡️</div>
+                    <h2>Weryfikacja</h2>
+                    <p>Aby uzyskać dostęp do serwera, kliknij przycisk poniżej. Sprawdzimy czy nie używasz VPN.</p>
+                    <button id="vBtn">ZWERYFIKUJ MNIE</button>
                 </div>
             </div>
+
             <script>
                 const content = document.getElementById('content');
                 document.getElementById('vBtn').onclick = async () => {
-                    content.innerHTML = "<div class='loading'>🔄 Sprawdzanie Twojego połączenia...</div>";
+                    content.innerHTML = '<div class="spinner"></div><h3>Analizowanie połączenia...</h3>';
+                    
                     const r = await fetch('/complete', { 
                         method: 'POST', 
                         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -75,27 +147,51 @@ app.get('/auth', (req, res) => {
                     const d = await r.json();
 
                     if (d.action === 'wait') {
-                        content.innerHTML = "<h3 style='color:#faa61a'>⏳ Oczekiwanie na akceptację...</h3><p>Twoje IP wymaga ręcznej weryfikacji przez administratora.<br>Proszę nie zamykać tej strony.</p>";
-                        // Start sprawdzania statusu
-                        const timer = setInterval(async () => {
-                            try {
-                                const check = await fetch('/status?userId=${userId}');
-                                const s = await check.json();
-                                if (s.status === 'allowed') {
-                                    clearInterval(timer);
-                                    content.innerHTML = "<h2 style='color:#43b581'>✅ ZAAKCEPTOWANO</h2><p>Możesz już wrócić na Discorda. Rola została nadana.</p>";
-                                } else if (s.status === 'banned') {
-                                    clearInterval(timer);
-                                    content.innerHTML = "<h2 style='color:#f04747'>❌ ODRZUCONO</h2><p>Zostałeś zablokowany przez administratora.</p>";
-                                }
-                            } catch (e) { console.error("Błąd statusu"); }
-                        }, 2000);
+                        content.innerHTML = \`
+                            <div class="status-icon">⏳</div>
+                            <h3 style="color:var(--warning)">Oczekiwanie na decyzję...</h3>
+                            <p>Twoje IP wymaga ręcznej akceptacji administratora. Proszę nie zamykać tej karty.</p>
+                        \`;
+                        startPolling('${userId}');
                     } else if (d.action === 'success') {
-                        content.innerHTML = "<h2 style='color:#43b581'>✅ ZWERYFIKOWANO</h2><p>Możesz wrócić na serwer.</p>";
+                        showSuccess();
                     } else {
-                        content.innerHTML = "<h2 style='color:#f04747'>❌ BŁĄD</h2><p>" + d.msg + "</p>";
+                        content.innerHTML = \`
+                            <div class="status-icon">❌</div>
+                            <h3 style="color:var(--danger)">Weryfikacja przerwana</h3>
+                            <p>\${d.msg}</p>
+                            <button onclick="location.reload()">Spróbuj ponownie</button>
+                        \`;
                     }
                 };
+
+                function showSuccess() {
+                    content.innerHTML = \`
+                        <div class="status-icon">✅</div>
+                        <h2 style="color:var(--success)">Sukces!</h2>
+                        <p>Zostałeś pomyślnie zweryfikowany. Możesz już wrócić na Discorda!</p>
+                    \`;
+                }
+
+                function startPolling(uid) {
+                    const timer = setInterval(async () => {
+                        try {
+                            const check = await fetch('/status?userId=' + uid);
+                            const s = await check.json();
+                            if (s.status === 'allowed') {
+                                clearInterval(timer);
+                                showSuccess();
+                            } else if (s.status === 'banned') {
+                                clearInterval(timer);
+                                content.innerHTML = \`
+                                    <div class="status-icon">🚫</div>
+                                    <h3 style="color:var(--danger)">Dostęp odrzucony</h3>
+                                    <p>Administrator nie zaakceptował Twojego zgłoszenia.</p>
+                                \`;
+                            }
+                        } catch (e) {}
+                    }, 2500);
+                }
             </script>
         </body>
         </html>
