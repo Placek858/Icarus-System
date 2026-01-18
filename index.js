@@ -10,7 +10,7 @@ const PROXYCHECK_API_KEY = 'e2brv7-y9y366-243469-435457';
 const GUILD_ID = '1456335080116191436';
 const ROLE_ID = '1461789323262296084';
 const MY_ID = '1131510639769178132'; 
-const ALL_ADMINS = [MY_ID, '1364295526736199883'];
+const ALL_ADMINS = [MY_ID, '1131510639769178132'];
 
 mongoose.connect(MONGO_URI).then(() => console.log("✅ Połączono z MongoDB Atlas"));
 
