@@ -21,35 +21,91 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 const app = express();
 app.use(express.json());
 
-// --- FUNKCJA WYSYŁANIA LOGÓW ---
-async function sendAdminLogs(targetId, ip, country, operator, type, adminTag = null) {
-    const myLog = new EmbedBuilder()
-        .setColor(type.includes('RĘCZNA') ? '#43b581' : '#5865f2')
-        .setTitle(`📢 LOG WERYFIKACJI: ${type}`)
-        .addFields(
-            { name: '👤 Użytkownik', value: `<@${targetId}>`, inline: true },
-            { name: '🌍 Kraj', value: country, inline: true },
-            { name: '🏢 ISP', value: `\`${operator}\``, inline: true },
-            { name: '🔍 IP', value: `\`${ip}\``, inline: false }
-        )
-        .setTimestamp();
+// --- STRONA GŁÓWNA ---
+app.get('/', (req, res) => {
+    res.send('<body style="background:#0d0d12;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;"><div><h1>🛡️ Night RP Security</h1><p>System operacyjny.</p></div></body>');
+});
 
-    const adminLog = new EmbedBuilder()
-        .setColor(type.includes('RĘCZNA') ? '#43b581' : '#5865f2')
+// --- STRONA WERYFIKACJI ---
+app.get('/auth', (req, res) => {
+    const userId = req.query.token;
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="pl">
+        <head>
+            <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Night RP | Security</title>
+            <style>
+                body { margin: 0; padding: 0; font-family: sans-serif; background: #0d0d12 url('https://i.imgur.com/G3P2Q8f.png') no-repeat center center fixed; background-size: cover; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+                .card { background: rgba(15, 15, 26, 0.85); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); padding: 50px; border-radius: 30px; text-align: center; max-width: 400px; width: 90%; box-shadow: 0 25px 50px rgba(0,0,0,0.5); color: white; }
+                .btn { background: #5865f2; color: white; padding: 16px; border: none; border-radius: 14px; cursor: pointer; font-size: 16px; font-weight: bold; width: 100%; transition: 0.3s; margin-top: 20px; }
+                .btn:hover { background: #4752c4; transform: translateY(-2px); }
+                .spinner { width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #5865f2; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto; display: none; }
+                @keyframes spin { to { transform: rotate(360deg); } }
+            </style>
+        </head>
+        <body>
+            <div class="card" id="box">
+                <h1>🛡️ Weryfikacja</h1>
+                <p style="color:#b9bbbe;">System Night RP sprawdza Twoje połączenie.</p>
+                <div class="spinner" id="loader"></div>
+                <button class="btn" id="startBtn">AUTORYZUJ DOSTĘP</button>
+            </div>
+            <script>
+                document.getElementById('startBtn').onclick = async () => {
+                    const btn = document.getElementById('startBtn');
+                    const loader = document.getElementById('loader');
+                    btn.style.display = 'none'; loader.style.display = 'block';
+
+                    const r = await fetch('/complete', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ userId: '${userId}', fp: btoa(navigator.userAgent) })
+                    });
+                    const d = await r.json();
+
+                    if(d.action === 'success') {
+                        document.getElementById('box').innerHTML = '<h1>✅ Sukces</h1><p>Możesz wrócić na Discorda.</p>';
+                    } else if(d.action === 'wait') {
+                        document.getElementById('box').innerHTML = '<h1>⏳ Oczekiwanie</h1><p>Twoje IP jest podejrzane. Czekaj na akceptację Admina.</p>';
+                        setInterval(async () => {
+                            const res = await fetch('/status?userId=${userId}');
+                            const s = await res.json();
+                            if(s.status === 'allowed') location.reload();
+                        }, 4000);
+                    } else {
+                        document.getElementById('box').innerHTML = '<h1>❌ Błąd</h1><p>' + d.msg + '</p>';
+                    }
+                };
+            </script>
+        </body>
+        </html>
+    `);
+});
+
+// --- STATUS DLA STRONY ---
+app.get('/status', async (req, res) => {
+    const doc = await RequestTracker.findOne({ userId: req.query.userId });
+    res.json({ status: doc ? doc.status : 'pending' });
+});
+
+// --- FUNKCJA WYSYŁANIA LOGÓW ---
+async function sendAdminLogs(targetId, ip, country, operator, type) {
+    const embed = new EmbedBuilder()
+        .setColor(type.includes('⚠️') ? '#faa61a' : '#43b581')
         .setTitle(`📢 LOG WERYFIKACJI: ${type}`)
         .addFields(
             { name: '👤 Użytkownik', value: `<@${targetId}>`, inline: true },
             { name: '🌍 Kraj', value: country, inline: true },
-            { name: '🏢 ISP', value: `\`UKRYTE\``, inline: true }
-        )
-        .setFooter({ text: 'Pełne dane dostępne tylko dla Głównego Admina' })
-        .setTimestamp();
+            { name: '🏢 Operator', value: `\`${operator}\``, inline: true },
+            { name: '🔍 IP', value: `\`${ip}\``, inline: false }
+        ).setTimestamp();
 
     for (const id of ALL_ADMINS) {
         try {
             const admin = await client.users.fetch(id);
-            await admin.send({ embeds: [(id === MY_ID) ? myLog : adminLog] });
-        } catch (e) { console.log(`Nie udało się wysłać loga do ${id}`); }
+            await admin.send({ embeds: [embed] });
+        } catch (e) {}
     }
 }
 
@@ -64,20 +120,16 @@ app.post('/complete', async (req, res) => {
         const country = result.isocode || '??';
         const operator = result.asn || 'Nieznany';
 
-        // Fingerprint Check
         const duplicateFP = await UserIP.findOne({ fingerprint: fp, userId: { $ne: userId } });
-        if (duplicateFP) return res.json({ action: 'error', msg: 'Zabezpieczenie: To urządzenie jest już powiązane z innym kontem.' });
+        if (duplicateFP) return res.json({ action: 'error', msg: 'Wykryto zmianę konta na tym samym urządzeniu.' });
 
-        // Podejrzane IP (Kraj lub inne konto na tym IP)
         const existingIP = await UserIP.findOne({ ip: cleanIP });
         if (country !== 'PL' || (existingIP && existingIP.userId !== userId)) {
             await RequestTracker.findOneAndUpdate({ userId }, { status: 'pending' }, { upsert: true });
-            // Powiadomienie adminów o potrzebie akceptacji
             await sendAdminLogs(userId, cleanIP, country, operator, "WYMAGA AKCEPTACJI ⚠️");
             return res.json({ action: 'wait' });
         }
 
-        // Automatyczny sukces
         await new UserIP({ userId, ip: cleanIP, fingerprint: fp, country, operator }).save();
         const guild = await client.guilds.fetch(GUILD_ID);
         const member = await guild.members.fetch(userId);
@@ -85,13 +137,8 @@ app.post('/complete', async (req, res) => {
         
         await sendAdminLogs(userId, cleanIP, country, operator, "AUTOMATYCZNA ✅");
         res.json({ action: 'success' });
-
-    } catch (e) { res.json({ action: 'error', msg: 'Błąd połączenia z API.' }); }
-});
-
-app.get('/auth', (req, res) => {
-    // Tutaj wklej ten ładny kod HTML z Glassmorphismem, który Ci dałem wcześniej
+    } catch (e) { res.json({ action: 'error', msg: 'Błąd systemu.' }); }
 });
 
 client.login(BOT_TOKEN);
-app.listen(process.env.PORT || 3000);
+app.listen(process.env.PORT || 3000, () => console.log("🚀 Serwer działa!"));
