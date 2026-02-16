@@ -7,10 +7,10 @@ const mongoose = require('mongoose');
 const BOT_TOKEN = process.env.DISCORD_TOKEN; 
 const MONGO_URI = process.env.MONGO_URI; 
 const PROXYCHECK_API_KEY = 'e2brv7-y9y366-243469-435457';
-const GUILD_ID = '1456335080116191436';
-const ROLE_ID = '1461789323262296084';
+const GUILD_ID = '1464901079593521322';
+const ROLE_ID = '1473060746194845959';
 const MY_ID = '1131510639769178132'; 
-const ALL_ADMINS = [MY_ID, '1364295526736199883', '1447828677109878904'];
+const ALL_ADMINS = [MY_ID, '1276586330847051780', '1210653947061080175'];
 
 mongoose.connect(MONGO_URI).then(() => console.log("✅ Połączono z bazą danych"));
 
