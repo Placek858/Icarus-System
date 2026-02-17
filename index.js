@@ -119,21 +119,26 @@ app.get('/verify', (req, res) => {
 });
 
 app.get('/auth', (req, res) => {
-    res.send('<style>' + UI_STYLE + '</style><div class="card"><h1>Analiza bezpieczeństwa</h1><p id="msg">Skanowanie parametrów urządzenia w celu autoryzacji...</p><div class="loader"></div><script>' +
+    res.send('<style>' + UI_STYLE + '</style><div class="card"><h1>Analiza bezpieczeństwa</h1><p id="msg">Skanowanie parametrów urządzenia...</p><div class="loader"></div>' +
+        '<canvas id="cf" style="display:none"></canvas>' +
+        '<script>' +
         'const run = async () => {' +
+        '  const canvas = document.getElementById("cf"); const ctx = canvas.getContext("2d");' +
+        '  ctx.textBaseline = "top"; ctx.font = "14px Arial"; ctx.fillText("icarus_check_v2", 2, 2);' +
+        '  const canvasFp = canvas.toDataURL();' + // Canvas fingerprinting (unikalne dla GPU/Monitora)
         '  const fpData = { ' +
         '    sw: window.screen.width, sh: window.screen.height, cd: window.screen.colorDepth, ' +
         '    l: navigator.language, c: navigator.hardwareConcurrency, p: navigator.platform, ' +
         '    tz: Intl.DateTimeFormat().resolvedOptions().timeZone, ' +
-        '    m: navigator.maxTouchPoints ' +
+        '    m: navigator.maxTouchPoints, cfp: canvasFp.slice(-50) ' +
         '  };' +
         '  const fp = JSON.stringify(fpData);' +
         '  await fetch("/complete", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ userId: "' + req.query.token + '", guildId: "' + req.query.guild + '", fp: fp }) });' +
         '  setInterval(async () => {' +
         '    const r = await fetch("/status?userId=' + req.query.token + '&guildId=' + req.query.guild + '");' +
         '    const d = await r.json();' +
-        '    if(d.status === "success") document.body.innerHTML = "<div class=\'card\'><h1>✅ Zweryfikowano</h1><p>Dostęp do infrastruktury został przyznany.</p></div>";' +
-        '    if(d.status === "rejected") document.body.innerHTML = "<div class=\'card\'><h1 style=\'color:#ff3b30\'>❌ Odmowa</h1><p>Administrator odrzucił wniosek o dostęp.</p></div>";' +
+        '    if(d.status === "success") document.body.innerHTML = "<div class=\'card\'><h1>✅ Zweryfikowano</h1><p>Dostęp przyznany.</p></div>";' +
+        '    if(d.status === "rejected") document.body.innerHTML = "<div class=\'card\'><h1 style=\'color:#ff3b30\'>❌ Odmowa</h1><p>Wykryto próbę oszustwa lub VPN.</p></div>";' +
         '  }, 3000);' +
         '}; run();' +
         '</script></div>');
@@ -145,19 +150,23 @@ app.post('/complete', async (req, res) => {
     const config = await GuildConfig.findOne({ guildId });
     const guild = client.guilds.cache.get(guildId);
 
-    // AGRESYWNA ANALIZA RYZYKA
+    // --- ZASTRZYK AGRESYWNEJ LOGIKI ---
     let manualReason = null;
     
-    // Szukamy jakiegokolwiek śladu tego urządzenia u INNEGO użytkownika na tym serwerze
-    const duplicate = await RequestTracker.findOne({ 
-        fingerprint: fp, 
-        guildId: guildId, 
-        userId: { $ne: userId } 
+    // 1. Sprawdź czy to IP jest już przypisane do kogoś innego na tym serwerze
+    const duplicateIP = await RequestTracker.findOne({ 
+        ip: ip, guildId: guildId, userId: { $ne: userId }, status: 'success' 
     });
     
-    if(duplicate) manualReason = `⚠️ MULTI-ACCOUNT: Urządzenie powiązane z ID: ${duplicate.userId}`;
+    // 2. Sprawdź Fingerprint (teraz z Canvas)
+    const duplicateFP = await RequestTracker.findOne({ 
+        fingerprint: fp, guildId: guildId, userId: { $ne: userId } 
+    });
+    
+    if(duplicateFP) manualReason = `⚠️ MULTI-ACCOUNT: Urządzenie użyte wcześniej przez <@${duplicateFP.userId}>`;
+    if(duplicateIP) manualReason = `🌐 MULTI-ACCOUNT: To samo IP co użytkownik <@${duplicateIP.userId}>`;
 
-    // Detekcja VPN / Hosting / Proxy
+    // 3. VPN / Proxy Check
     const ipData = await axios.get(`http://ip-api.com/json/${ip}?fields=status,proxy,hosting,country,city,isp`).catch(() => ({data:{}}));
     if(ipData.data.proxy || ipData.data.hosting) manualReason = "🛡️ WYKRYTO VPN / PROXY / HOSTING";
 
@@ -167,32 +176,31 @@ app.post('/complete', async (req, res) => {
     const logChan = guild.channels.cache.get(config?.logChannelId);
     if(logChan) {
         const embed = new EmbedBuilder()
-            .setTitle(manualReason ? '🚨 WYMAGANA DECYZJA ADMINISTRATORA' : '✅ LOG AUTOMATYCZNEJ WERYFIKACJI')
+            .setTitle(manualReason ? '🚨 BLOKADA / DECYZJA' : '✅ LOG WERYFIKACJI')
             .setColor(manualReason ? '#ff3b30' : '#34c759')
-            .setThumbnail('https://cdn-icons-png.flaticon.com/512/1041/1041916.png')
             .addFields(
                 { name: '👤 Użytkownik', value: `<@${userId}> (\`${userId}\`)` },
-                { name: '🌐 Adres IP', value: `\`${ip}\` (${ipData.data.country || 'N/A'})`, inline: true },
-                { name: '💻 Specyfikacja', value: `OS: ${parsedFp.p}\nTZ: ${parsedFp.tz}\nEkran: ${parsedFp.sw}x${parsedFp.sh}`, inline: true }
+                { name: '🌐 Sieć', value: `IP: \`${ip}\`\nKraj: ${ipData.data.country || 'N/A'}`, inline: true },
+                { name: '💻 Fingerprint', value: `GPU-Hash: \`${parsedFp.cfp}\`\nTZ: ${parsedFp.tz}`, inline: true }
             );
 
         if(manualReason) {
-            embed.addFields({ name: '🚩 ALERT BEZPIECZEŃSTWA', value: `**${manualReason}**` });
+            embed.addFields({ name: '🚩 POWÓD', value: `**${manualReason}**` });
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`acc_${userId}_${guildId}`).setLabel('Autoryzuj ręcznie').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`rej_${userId}_${guildId}`).setLabel('Zablokuj dostęp').setStyle(ButtonStyle.Danger)
+                new ButtonBuilder().setCustomId(`rej_${userId}_${guildId}`).setLabel('Odrzuć i Zablokuj').setStyle(ButtonStyle.Danger)
             );
             logChan.send({ embeds: [embed], components: [row] });
+            // Jeśli wykryto oszustwo, nie nadajemy roli automatycznie!
         } else {
-            // AUTOMAT
             try {
                 const member = await guild.members.fetch(userId);
                 if (config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
                 await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'success' });
-                embed.setDescription('System automatycznie zatwierdził profil. Brak powiązań sprzętowych i VPN.');
+                embed.setDescription('System nie wykrył powiązań. Rola nadana.');
                 logChan.send({ embeds: [embed] });
             } catch (e) {
-                logChan.send({ content: `⚠️ Błąd automatycznego nadawania roli dla <@${userId}>. Sprawdź hierarchię ról.` });
+                logChan.send({ content: `Błąd ról dla <@${userId}>` });
             }
         }
     }
@@ -210,10 +218,10 @@ client.on('interactionCreate', async (i) => {
         const member = await guild.members.fetch(uid).catch(() => null);
         if (member && config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
         await RequestTracker.findOneAndUpdate({ userId: uid, guildId: gid }, { status: 'success' });
-        i.update({ content: '✅ Dostęp został przyznany przez administratora.', embeds: [], components: [] });
+        i.update({ content: '✅ Zaakceptowano.', embeds: [], components: [] });
     } else if (action === 'rej') {
         await RequestTracker.findOneAndUpdate({ userId: uid, guildId: gid }, { status: 'rejected' });
-        i.update({ content: '❌ Wniosek o dostęp został odrzucony.', embeds: [], components: [] });
+        i.update({ content: '❌ Odrzucono.', embeds: [], components: [] });
     }
 });
 
@@ -222,5 +230,5 @@ app.get('/status', async (req, res) => {
     res.json({ status: doc ? doc.status : 'pending' });
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("Serwer HTTP Icarus Online."));
+app.listen(process.env.PORT || 3000, () => console.log("Icarus Online."));
 client.login(process.env.DISCORD_TOKEN);
