@@ -10,7 +10,7 @@ const PROXYCHECK_API_KEY = 'e2brv7-y9y366-243469-435457';
 const GUILD_ID = '1464901079593521322';
 const ROLE_ID = '1473060746194845959';
 const ALL_ADMINS = ['1131510639769178132', '1276586330847051780', '1210653947061080175'];
-const DOMAIN = 'https://icarus-system.pl'; // Twoja nowa domena
+const DOMAIN = process.env.DOMAIN || 'https://icarus-system.pl';
 
 mongoose.connect(MONGO_URI).then(() => console.log("✅ Icarus System: Uplink Established"));
 
