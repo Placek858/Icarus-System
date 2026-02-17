@@ -6,158 +6,149 @@ const { Strategy } = require('passport-discord');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
 
-// --- CONFIGURATION ---
-const BOT_TOKEN = process.env.DISCORD_TOKEN;
-const MONGO_URI = process.env.MONGO_URI;
-const DOMAIN = process.env.DOMAIN;
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-
-// --- DATABASE MODELS ---
-mongoose.connect(MONGO_URI).then(() => console.log("✅ ICARUS: System Core Online"));
+// --- KONFIGURACJA ---
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+mongoose.connect(process.env.MONGO_URI);
 
 const GuildConfig = mongoose.model('GuildConfig', new mongoose.Schema({
     guildId: String,
-    verifyRoleId: String
+    verifyRoleId: String,
+    logChannelId: String
 }));
 
 const RequestTracker = mongoose.model('RequestTracker', new mongoose.Schema({ 
-    userId: String, 
-    guildId: String,
-    status: { type: String, default: 'pending' },
-    reason: String
+    userId: String, guildId: String, status: { type: String, default: 'pending' }, reason: String 
 }));
 
-// --- BOT CLIENT ---
-const client = new Client({ 
-    intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.GuildMessages
-    ] 
-});
-client.login(BOT_TOKEN);
+client.login(process.env.DISCORD_TOKEN);
 
-// --- EXPRESS SETUP ---
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 app.use(session({
-    secret: 'icarus_secret_2026_full',
+    secret: 'icarus_apple_enterprise_2026',
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({ mongoUrl: MONGO_URI })
+    store: MongoStore.create({ mongoUrl: process.env.MONGO_URI })
 }));
 
 passport.serializeUser((user, done) => done(null, user));
 passport.deserializeUser((obj, done) => done(null, obj));
-
 passport.use(new Strategy({
-    clientID: CLIENT_ID,
-    clientSecret: CLIENT_SECRET,
-    callbackURL: `${DOMAIN}/auth/callback`,
-    scope: ['identify', 'guilds']
-}, (accessToken, refreshToken, profile, done) => {
-    process.nextTick(() => done(null, profile));
-}));
+    clientID: process.env.CLIENT_ID, clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: `${process.env.DOMAIN}/auth/callback`, scope: ['identify', 'guilds']
+}, (at, rt, profile, done) => done(null, profile)));
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-// --- STYLES ---
-const UI_STYLE = `
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background-color: #0f111a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; }
-    .container { text-align: center; background: #161926; padding: 60px; border-radius: 24px; border: 1px solid #2d334a; box-shadow: 0 20px 50px rgba(0,0,0,0.5); width: 450px; }
-    h1 { font-size: 28px; letter-spacing: 4px; color: #5469d4; margin-bottom: 40px; }
-    .btn { display: block; padding: 18px; margin: 15px 0; border-radius: 8px; text-decoration: none; font-weight: 600; transition: 0.3s; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; text-align: center; cursor: pointer; border: none; width: 100%; box-sizing: border-box; }
-    .btn-verify { background: #5469d4; color: white; }
-    .btn-dash { border: 1px solid #5469d4; color: #5469d4; background: transparent; }
-    .btn:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(84, 105, 212, 0.2); }
-    .loader { border: 4px solid #1c2030; border-top: 4px solid #5469d4; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; display: none; }
+// --- STYL APPLE / ENTERPRISE ---
+const APPLE_CSS = `
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+    body { background: #f5f5f7; color: #1d1d1f; font-family: 'Inter', -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; -webkit-font-smoothing: antialiased; }
+    .card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(20px); padding: 50px; border-radius: 30px; text-align: center; width: 420px; box-shadow: 0 20px 40px rgba(0,0,0,0.04); border: 1px solid rgba(255,255,255,0.3); }
+    h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.5px; margin-bottom: 10px; }
+    p { color: #86868b; font-size: 15px; line-height: 1.5; margin-bottom: 35px; font-weight: 400; }
+    .btn { display: block; width: 100%; padding: 14px; margin: 12px 0; border-radius: 12px; font-weight: 500; cursor: pointer; text-decoration: none; border: none; font-size: 15px; transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1); }
+    .btn-blue { background: #0071e3; color: white; }
+    .btn-blue:hover { background: #0077ed; transform: scale(1.02); }
+    .btn-outline { background: transparent; border: 1px solid #d2d2d7; color: #1d1d1f; }
+    .btn-outline:hover { background: #f5f5f7; }
+    .loader { border: 3px solid #f3f3f3; border-top: 3px solid #0071e3; border-radius: 50%; width: 35px; height: 35px; animation: spin 0.8s linear infinite; margin: 25px auto; display: none; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    input { width: 100%; padding: 12px; margin: 10px 0; background: #0f111a; border: 1px solid #2d334a; color: white; border-radius: 6px; }
+    input, select { width: 100%; padding: 12px; margin: 10px 0; background: white; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px; box-sizing: border-box; }
 `;
 
 // --- ROUTES ---
 
 app.get('/', (req, res) => {
-    res.send(`<style>${UI_STYLE}</style><div class="container"><h1>ICARUS SYSTEM</h1><a href="/login?target=verify" class="btn btn-verify">Zweryfikuj się</a><a href="/login?target=dashboard" class="btn btn-dash">Panel Zarządzania</a></div>`);
+    res.send(`<style>${APPLE_CSS}</style><div class="card"><h1>Icarus Cloud Service</h1><p>Zaloguj się do swojego konta firmowego, aby kontynuować proces autoryzacji urządzenia.</p><a href="/login?target=verify" class="btn btn-blue">Autoryzuj tożsamość</a><a href="/login?target=dashboard" class="btn btn-outline">Zarządzanie systemem</a></div>`);
 });
 
 app.get('/login', (req, res, next) => {
-    const targetType = req.query.target || 'dashboard';
-    const state = Buffer.from(JSON.stringify({ type: targetType })).toString('base64');
+    const state = Buffer.from(JSON.stringify({ type: req.query.target || 'dashboard' })).toString('base64');
     passport.authenticate('discord', { state })(req, res, next);
 });
 
 app.get('/auth/callback', passport.authenticate('discord', { failureRedirect: '/' }), (req, res) => {
     const decoded = JSON.parse(Buffer.from(req.query.state, 'base64').toString());
-    res.redirect(`/${decoded.type}`);
+    res.redirect(\`/\${decoded.type}\`);
 });
 
+// DASHBOARD - ZARZĄDZANIE
 app.get('/dashboard', (req, res) => {
-    if (!req.isAuthenticated()) return res.redirect('/login?target=dashboard');
-    const adminGuilds = req.user.guilds.filter(g => (g.permissions & 0x8) === 0x8);
-    let cards = adminGuilds.map(g => `
-        <div style="padding:15px; border-bottom:1px solid #2d334a; display:flex; justify-content:space-between; align-items:center;">
-            <span>${g.name}</span>
-            <a href="/manage/${g.id}" class="btn-verify" style="padding:8px 15px; font-size:11px; width:auto; margin:0; text-decoration:none; border-radius:5px;">Konfiguruj</a>
+    if (!req.isAuthenticated()) return res.redirect('/login');
+    const guilds = req.user.guilds.filter(g => (g.permissions & 0x8) === 0x8);
+    let html = guilds.map(g => `
+        <div style="padding:15px; border-bottom:1px solid #d2d2d7; display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:500;">${g.name}</span>
+            <a href="/manage/${g.id}" class="btn-blue" style="padding:6px 14px; font-size:12px; text-decoration:none; border-radius:8px; width:auto; margin:0;">Konfiguruj</a>
         </div>
     `).join('');
-    res.send(`<style>${UI_STYLE}</style><div class="container"><h2>Twoje Serwery</h2><div style="text-align:left;">${cards || 'Brak uprawnień admina.'}</div><a href="/" class="btn-dash" style="text-decoration:none; display:block; margin-top:20px;">Powrót</a></div>`);
+    res.send(`<style>${APPLE_CSS}</style><div class="card"><h1>Panel Administracyjny</h1><p>Wybierz jednostkę serwerową do modyfikacji.</p><div style="text-align:left;">${html || 'Brak aktywnych licencji administratora.'}</div></div>`);
 });
 
 app.get('/manage/:guildId', async (req, res) => {
     if (!req.isAuthenticated()) return res.redirect('/login');
-    const config = await GuildConfig.findOne({ guildId: req.params.guildId }) || { verifyRoleId: '' };
-    res.send(`<style>${UI_STYLE}</style><div class="container"><h3>Ustawienia</h3><form action="/save/${req.params.guildId}" method="POST"><label>ID Roli Weryfikacyjnej:</label><input type="text" name="roleId" value="${config.verifyRoleId}"><button type="submit" class="btn btn-verify">ZAPISZ USTAWIENIA</button></form></div>`);
+    const config = await GuildConfig.findOne({ guildId: req.params.guildId }) || { verifyRoleId: '', logChannelId: '' };
+    const guild = client.guilds.cache.get(req.params.guildId);
+    const channels = guild.channels.cache.filter(c => c.type === 0); // Tylko tekstowe
+
+    let chanOptions = channels.map(c => `<option value="${c.id}" ${config.logChannelId === c.id ? 'selected' : ''}>#${c.name}</option>`).join('');
+
+    res.send(`<style>${APPLE_CSS}</style><div class="card"><h1>Konfiguracja Bezpieczeństwa</h1><p>Ustaw parametry weryfikacji dla serwera <b>${guild.name}</b>.</p>
+        <form action="/save/${req.params.guildId}" method="POST">
+            <label style="font-size:12px; color:#86868b; display:block; text-align:left;">ID Roli (Automatic Access):</label>
+            <input type="text" name="roleId" value="${config.verifyRoleId}" placeholder="Wklej ID roli">
+            <label style="font-size:12px; color:#86868b; display:block; text-align:left; margin-top:10px;">Kanał Logów (Dla przycisków):</label>
+            <select name="logChanId">${chanOptions}</select>
+            <button type="submit" class="btn btn-blue" style="margin-top:20px;">Zapisz zmiany w chmurze</button>
+        </form></div>`);
 });
 
 app.post('/save/:guildId', async (req, res) => {
-    await GuildConfig.findOneAndUpdate({ guildId: req.params.guildId }, { verifyRoleId: req.body.roleId }, { upsert: true });
+    await GuildConfig.findOneAndUpdate({ guildId: req.params.guildId }, { verifyRoleId: req.body.roleId, logChannelId: req.body.logChanId }, { upsert: true });
     res.redirect('/dashboard');
 });
 
+// WERYFIKACJA
 app.get('/verify', (req, res) => {
-    if (!req.isAuthenticated()) return res.redirect('/login?target=verify');
+    if (!req.isAuthenticated()) return res.redirect('/login');
     const guilds = req.user.guilds.filter(g => client.guilds.cache.has(g.id));
-    let cards = guilds.map(g => `<a href="/auth?token=${req.user.id}&guild=${g.id}" class="btn btn-dash" style="text-decoration:none;">${g.name}</a>`).join('');
-    res.send(`<style>${UI_STYLE}</style><div class="container"><h2>Wybierz Serwer</h2>${cards}</div>`);
+    let html = guilds.map(g => `<a href="/auth?token=${req.user.id}&guild=${g.id}" class="btn btn-outline">${g.name}</a>`).join('');
+    res.send(`<style>${APPLE_CSS}</style><div class="card"><h1>System Weryfikacji</h1><p>Wybierz serwer, na którym chcesz autoryzować swoje konto.</p>${html}</div>`);
 });
 
 app.get('/auth', (req, res) => {
     res.send(`
-        <style>${UI_STYLE}</style>
-        <div class="container">
-            <h2 id="t">Weryfikacja</h2>
-            <p id="d">Kliknij START, aby system rozpoczął proces weryfikacji tożsamości.</p>
+        <style>${APPLE_CSS}</style>
+        <div class="card">
+            <h1 id="t">Weryfikacja Tożsamości</h1>
+            <p id="d">Twoje urządzenie oczekuje na bezpieczne połączenie z serwerami Icarus. Kliknij przycisk poniżej, aby rozpocząć szyfrowany proces.</p>
             <div id="l" class="loader"></div>
-            <button id="b" onclick="start()" class="btn btn-verify">Rozpocznij (START)</button>
+            <button id="b" onclick="go()" class="btn btn-blue">Rozpocznij autoryzację</button>
         </div>
         <script>
-            async function start() {
-                document.getElementById('b').style.display = 'none';
-                document.getElementById('l').style.display = 'block';
-                document.getElementById('d').innerText = 'Inicjowanie połączenia...';
-
-                const r = await fetch('/complete', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+            async function go() {
+                document.getElementById('b').style.display='none';
+                document.getElementById('l').style.display='block';
+                document.getElementById('d').innerText = 'Nawiązywanie połączenia z serwerem logowania...';
+                
+                const response = await fetch('/complete', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({ userId: '${req.query.token}', guildId: '${req.query.guild}' })
                 });
-                const res = await r.json();
-
-                if(res.instant) {
-                    document.body.innerHTML = '<div class="container"><h1>✅ SUKCES</h1><p>Weryfikacja automatyczna zakończona pomyślnie!</p></div>';
+                const data = await response.json();
+                
+                if(data.status === 'auto') {
+                    document.body.innerHTML = '<div class="card"><h1>✅ Autoryzowano</h1><p>Dostęp został przyznany automatycznie. Twoja sesja jest bezpieczna.</p></div>';
                 } else {
-                    document.getElementById('d').innerText = 'Oczekiwanie na akceptację przez administrację...';
-                    const check = setInterval(async () => {
-                        const st = await fetch('/status?userId=${req.query.token}&guildId=${req.query.guild}');
-                        const s = await st.json();
-                        if(s.status === 'success') { clearInterval(check); document.body.innerHTML = '<h1>✅ ZWERYFIKOWANO</h1>'; }
-                        if(s.status === 'rejected') { clearInterval(check); document.body.innerHTML = '<h1>❌ ODRZUCONO</h1><p>Powód: '+s.reason+'</p>'; }
+                    document.getElementById('d').innerText = 'Twoja prośba została przesłana do ręcznej weryfikacji przez administratora systemu. Proszę czekać...';
+                    const i = setInterval(async () => {
+                        const r = await fetch('/status?userId=${req.query.token}&guildId=${req.query.guild}');
+                        const s = await r.json();
+                        if(s.status === 'success') { clearInterval(i); document.body.innerHTML = '<div class="card"><h1>✅ Zweryfikowano</h1><p>Administrator zatwierdził Twój dostęp.</p></div>'; }
+                        if(s.status === 'rejected') { clearInterval(i); document.body.innerHTML = '<div class="card"><h1 style="color:#ff3b30">❌ Odmowa</h1><p>Twój wniosek został odrzucony. Powód: '+s.reason+'</p></div>'; }
                     }, 3000);
                 }
             }
@@ -169,52 +160,52 @@ app.post('/complete', async (req, res) => {
     const { userId, guildId } = req.body;
     const config = await GuildConfig.findOne({ guildId });
     const guild = client.guilds.cache.get(guildId);
-
-    if (config && config.verifyRoleId && guild) {
+    
+    // LOGIKA AUTOMATYCZNA
+    if (config && config.verifyRoleId) {
         try {
             const member = await guild.members.fetch(userId);
             await member.roles.add(config.verifyRoleId);
             await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'success' }, { upsert: true });
-            return res.json({ instant: true });
-        } catch (e) { /* Kontynuuj do ręcznej jeśli automatyczna zawiedzie */ }
+            return res.json({ status: 'auto' });
+        } catch (e) { /* jeśli błąd, leci do ręcznej */ }
     }
 
+    // LOGIKA RĘCZNA (PRZYCISKI)
     await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'pending' }, { upsert: true });
-    const logChan = guild.channels.cache.find(c => c.name === 'icarus-logs') || guild.channels.cache.filter(c => c.isTextBased()).first();
+    const logChan = guild.channels.cache.get(config?.logChannelId) || guild.channels.cache.find(c => c.name.includes('log'));
     
-    if (logChan) {
-        const embed = new EmbedBuilder().setTitle('🛡️ Prośba o weryfikację').setColor('#5469d4').setDescription(`Użytkownik: <@${userId}>`);
+    if(logChan) {
+        const embed = new EmbedBuilder()
+            .setTitle('🛡️ SECURITY ALERT: MANUAL VERIFICATION')
+            .setColor('#0071e3')
+            .setDescription(`Zainicjowano nową prośbę o dostęp do systemu.\n\n**Użytkownik:** <@${userId}>\n**ID:** \`${userId}\``)
+            .setFooter({ text: 'Icarus Enterprise Security Protocol' })
+            .setTimestamp();
+            
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`acc_${userId}_${guildId}`).setLabel('AKCEPTUJ').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`rej_${userId}_${guildId}`).setLabel('ODRZUĆ').setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId(`acc_${userId}_${guildId}`).setLabel('Zatwierdź dostęp').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`rej_${userId}_${guildId}`).setLabel('Odrzuć wniosek').setStyle(ButtonStyle.Danger)
         );
         logChan.send({ embeds: [embed], components: [row] });
     }
-    res.json({ instant: false });
+    res.json({ status: 'manual' });
 });
 
-app.get('/status', async (req, res) => {
-    const doc = await RequestTracker.findOne({ userId: req.query.userId, guildId: req.query.guildId });
-    res.json({ status: doc ? doc.status : 'pending', reason: doc?.reason || 'Brak' });
-});
-
-// --- BOT INTERACTIONS ---
 client.on('interactionCreate', async (i) => {
     if (i.isButton()) {
         const [action, uid, gid] = i.customId.split('_');
         if (action === 'acc') {
             const config = await GuildConfig.findOne({ guildId: gid });
             const guild = client.guilds.cache.get(gid);
-            try {
-                const member = await guild.members.fetch(uid);
-                if (config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
-                await RequestTracker.findOneAndUpdate({ userId: uid, guildId: gid }, { status: 'success' });
-                await i.update({ content: '✅ Zaakceptowano', embeds: [], components: [] });
-            } catch (e) { i.reply({ content: 'Błąd nadawania roli!', ephemeral: true }); }
+            const member = await guild.members.fetch(uid).catch(() => null);
+            if (member && config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
+            await RequestTracker.findOneAndUpdate({ userId: uid, guildId: gid }, { status: 'success' });
+            await i.update({ content: '✅ **Pomyślnie autoryzowano użytkownika.**', embeds: [], components: [] });
         }
         if (action === 'rej') {
-            const modal = new ModalBuilder().setCustomId(`mod_${uid}_${gid}`).setTitle('Powód odrzucenia');
-            modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('r').setLabel('Dlaczego?').setStyle(TextInputStyle.Short)));
+            const modal = new ModalBuilder().setCustomId(`mod_${uid}_${gid}`).setTitle('Uzasadnienie odrzucenia');
+            modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('r').setLabel('Powód odmowy:').setStyle(TextInputStyle.Short).setRequired(true)));
             await i.showModal(modal);
         }
     }
@@ -222,8 +213,13 @@ client.on('interactionCreate', async (i) => {
         const [,, uid, gid] = i.customId.split('_');
         const reason = i.fields.getTextInputValue('r');
         await RequestTracker.findOneAndUpdate({ userId: uid, guildId: gid }, { status: 'rejected', reason });
-        await i.update({ content: `❌ Odrzucono: ${reason}`, embeds: [], components: [] });
+        await i.update({ content: `❌ **Wniosek odrzucony.** Powód: ${reason}`, embeds: [], components: [] });
     }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("🚀 Server is running."));
+app.get('/status', async (req, res) => {
+    const doc = await RequestTracker.findOne({ userId: req.query.userId, guildId: req.query.guildId });
+    res.json({ status: doc ? doc.status : 'pending', reason: doc?.reason });
+});
+
+app.listen(process.env.PORT || 3000);
