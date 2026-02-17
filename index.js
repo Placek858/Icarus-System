@@ -120,25 +120,24 @@ app.get('/verify', (req, res) => {
 
 app.get('/auth', (req, res) => {
     res.send('<style>' + UI_STYLE + '</style><div class="card"><h1>Analiza bezpieczeństwa</h1><p id="msg">Skanowanie parametrów urządzenia...</p><div class="loader"></div>' +
-        '<canvas id="cf" style="display:none"></canvas>' +
+        '<canvas id="cf" width="200" height="40" style="display:none"></canvas>' +
         '<script>' +
         'const run = async () => {' +
         '  const canvas = document.getElementById("cf"); const ctx = canvas.getContext("2d");' +
         '  ctx.textBaseline = "top"; ctx.font = "14px Arial"; ctx.fillText("icarus_check_v2", 2, 2);' +
-        '  const canvasFp = canvas.toDataURL();' + // Canvas fingerprinting (unikalne dla GPU/Monitora)
+        '  const canvasFp = canvas.toDataURL().slice(-50);' + 
         '  const fpData = { ' +
         '    sw: window.screen.width, sh: window.screen.height, cd: window.screen.colorDepth, ' +
         '    l: navigator.language, c: navigator.hardwareConcurrency, p: navigator.platform, ' +
         '    tz: Intl.DateTimeFormat().resolvedOptions().timeZone, ' +
-        '    m: navigator.maxTouchPoints, cfp: canvasFp.slice(-50) ' +
+        '    m: navigator.maxTouchPoints, cfp: canvasFp ' +
         '  };' +
-        '  const fp = JSON.stringify(fpData);' +
-        '  await fetch("/complete", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ userId: "' + req.query.token + '", guildId: "' + req.query.guild + '", fp: fp }) });' +
+        '  await fetch("/complete", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ userId: "' + req.query.token + '", guildId: "' + req.query.guild + '", fp: JSON.stringify(fpData) }) });' +
         '  setInterval(async () => {' +
         '    const r = await fetch("/status?userId=' + req.query.token + '&guildId=' + req.query.guild + '");' +
         '    const d = await r.json();' +
         '    if(d.status === "success") document.body.innerHTML = "<div class=\'card\'><h1>✅ Zweryfikowano</h1><p>Dostęp przyznany.</p></div>";' +
-        '    if(d.status === "rejected") document.body.innerHTML = "<div class=\'card\'><h1 style=\'color:#ff3b30\'>❌ Odmowa</h1><p>Wykryto próbę oszustwa lub VPN.</p></div>";' +
+        '    if(d.status === "rejected") document.body.innerHTML = "<div class=\'card\'><h1 style=\'color:#ff3b30\'>❌ Odmowa</h1><p>Wykryto powiązanie z innym kontem lub VPN.</p></div>";' +
         '  }, 3000);' +
         '}; run();' +
         '</script></div>');
@@ -149,58 +148,61 @@ app.post('/complete', async (req, res) => {
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const config = await GuildConfig.findOne({ guildId });
     const guild = client.guilds.cache.get(guildId);
+    const parsedFp = JSON.parse(fp);
 
-    // --- ZASTRZYK AGRESYWNEJ LOGIKI ---
     let manualReason = null;
     
-    // 1. Sprawdź czy to IP jest już przypisane do kogoś innego na tym serwerze
-    const duplicateIP = await RequestTracker.findOne({ 
-        ip: ip, guildId: guildId, userId: { $ne: userId }, status: 'success' 
-    });
-    
-    // 2. Sprawdź Fingerprint (teraz z Canvas)
+    // --- KLUCZOWA POPRAWKA LOGIKI ---
+    // Szukamy po unikalnym skrócie GPU (cfp), nie po całym stringu fingerprintu
     const duplicateFP = await RequestTracker.findOne({ 
-        fingerprint: fp, guildId: guildId, userId: { $ne: userId } 
+        "details.cfp": parsedFp.cfp, 
+        guildId: guildId, 
+        userId: { $ne: userId } 
     });
     
-    if(duplicateFP) manualReason = `⚠️ MULTI-ACCOUNT: Urządzenie użyte wcześniej przez <@${duplicateFP.userId}>`;
-    if(duplicateIP) manualReason = `🌐 MULTI-ACCOUNT: To samo IP co użytkownik <@${duplicateIP.userId}>`;
+    const duplicateIP = await RequestTracker.findOne({ 
+        ip: ip, 
+        guildId: guildId, 
+        userId: { $ne: userId },
+        status: 'success'
+    });
+    
+    if(duplicateFP) manualReason = `⚠️ MULTI-ACCOUNT: Ten sam sprzęt co u <@${duplicateFP.userId}>`;
+    else if(duplicateIP) manualReason = `🌐 MULTI-ACCOUNT: To samo IP co u <@${duplicateIP.userId}>`;
 
-    // 3. VPN / Proxy Check
+    // VPN Check
     const ipData = await axios.get(`http://ip-api.com/json/${ip}?fields=status,proxy,hosting,country,city,isp`).catch(() => ({data:{}}));
     if(ipData.data.proxy || ipData.data.hosting) manualReason = "🛡️ WYKRYTO VPN / PROXY / HOSTING";
 
-    const parsedFp = JSON.parse(fp);
-    await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'pending', fingerprint: fp, ip: ip, details: { ...parsedFp, ...ipData.data } }, { upsert: true });
+    await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'pending', fingerprint: fp, ip: ip, details: parsedFp }, { upsert: true });
 
     const logChan = guild.channels.cache.get(config?.logChannelId);
     if(logChan) {
         const embed = new EmbedBuilder()
-            .setTitle(manualReason ? '🚨 BLOKADA / DECYZJA' : '✅ LOG WERYFIKACJI')
+            .setTitle(manualReason ? '🚨 ALERT BEZPIECZEŃSTWA' : '✅ LOG WERYFIKACJI')
             .setColor(manualReason ? '#ff3b30' : '#34c759')
             .addFields(
                 { name: '👤 Użytkownik', value: `<@${userId}> (\`${userId}\`)` },
-                { name: '🌐 Sieć', value: `IP: \`${ip}\`\nKraj: ${ipData.data.country || 'N/A'}`, inline: true },
-                { name: '💻 Fingerprint', value: `GPU-Hash: \`${parsedFp.cfp}\`\nTZ: ${parsedFp.tz}`, inline: true }
+                { name: '🌐 Sieć', value: `IP: \`${ip}\` (${ipData.data.country || 'N/A'})`, inline: true },
+                { name: '💻 GPU Hash', value: `\`${parsedFp.cfp}\``, inline: true }
             );
 
         if(manualReason) {
             embed.addFields({ name: '🚩 POWÓD', value: `**${manualReason}**` });
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`acc_${userId}_${guildId}`).setLabel('Autoryzuj ręcznie').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`rej_${userId}_${guildId}`).setLabel('Odrzuć i Zablokuj').setStyle(ButtonStyle.Danger)
+                new ButtonBuilder().setCustomId(`rej_${userId}_${guildId}`).setLabel('Zablokuj').setStyle(ButtonStyle.Danger)
             );
             logChan.send({ embeds: [embed], components: [row] });
-            // Jeśli wykryto oszustwo, nie nadajemy roli automatycznie!
         } else {
             try {
                 const member = await guild.members.fetch(userId);
                 if (config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
                 await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'success' });
-                embed.setDescription('System nie wykrył powiązań. Rola nadana.');
+                embed.setDescription('System automatycznie zatwierdził profil. Brak powiązań.');
                 logChan.send({ embeds: [embed] });
             } catch (e) {
-                logChan.send({ content: `Błąd ról dla <@${userId}>` });
+                logChan.send({ content: `⚠️ Błąd ról dla <@${userId}>` });
             }
         }
     }
@@ -218,10 +220,10 @@ client.on('interactionCreate', async (i) => {
         const member = await guild.members.fetch(uid).catch(() => null);
         if (member && config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
         await RequestTracker.findOneAndUpdate({ userId: uid, guildId: gid }, { status: 'success' });
-        i.update({ content: '✅ Zaakceptowano.', embeds: [], components: [] });
+        i.update({ content: '✅ Zaakceptowano przez admina.', embeds: [], components: [] });
     } else if (action === 'rej') {
         await RequestTracker.findOneAndUpdate({ userId: uid, guildId: gid }, { status: 'rejected' });
-        i.update({ content: '❌ Odrzucono.', embeds: [], components: [] });
+        i.update({ content: '❌ Odrzucono przez admina.', embeds: [], components: [] });
     }
 });
 
