@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const express = require('express');
 const mongoose = require('mongoose');
 const passport = require('passport');
@@ -24,7 +24,9 @@ const GuildConfig = mongoose.model('GuildConfig', new mongoose.Schema({
 const RequestTracker = mongoose.model('RequestTracker', new mongoose.Schema({ 
     userId: String, 
     guildId: String,
-    status: { type: String, default: 'pending' }
+    status: { type: String, default: 'pending' },
+    adminId: String,
+    reason: String
 }));
 
 // --- BOT CLIENT ---
@@ -60,7 +62,6 @@ app.use(passport.session());
 
 // --- ROUTES ---
 
-// 1. STRONA GŁÓWNA - DWA PRZYCISKI
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -108,7 +109,6 @@ app.get('/auth/callback', passport.authenticate('discord', { failureRedirect: '/
     res.redirect(`/${target}`);
 });
 
-// 2. LISTA SERWERÓW DO WERYFIKACJI
 app.get('/verify', (req, res) => {
     if (!req.isAuthenticated()) return res.redirect('/login?target=verify');
     const botGuilds = client.guilds.cache;
@@ -125,7 +125,6 @@ app.get('/verify', (req, res) => {
     res.send(dashboardTemplate("Wybierz serwer do weryfikacji", cardsHtml));
 });
 
-// 3. LISTA SERWERÓW DO ZARZĄDZANIA
 app.get('/dashboard', (req, res) => {
     if (!req.isAuthenticated()) return res.redirect('/login?target=dashboard');
     const botGuilds = client.guilds.cache;
@@ -168,7 +167,6 @@ function dashboardTemplate(title, content) {
     `;
 }
 
-// 4. PANEL KONFIGURACJI
 app.get('/manage/:guildId', async (req, res) => {
     if (!req.isAuthenticated()) return res.redirect('/login');
     const userGuild = req.user.guilds.find(g => g.id === req.params.guildId);
@@ -196,27 +194,28 @@ app.post('/save/:guildId', async (req, res) => {
     res.redirect('/dashboard');
 });
 
-// 5. FINALNA WERYFIKACJA
 app.get('/auth', (req, res) => {
-    const { token, guild } = req.query;
     res.send(`
-        <body style="background: #f6f9fc; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh;">
-            <div style="background: white; padding: 40px; border-radius: 10px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                <h2 style="color: #5469d4;">Weryfikacja Icarus</h2>
-                <button onclick="start()" id="btn" style="padding: 15px 30px; background: #5469d4; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">POTWIERDZAM</button>
+        <body style="background:#f0f2f5;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
+            <div style="background:white;padding:50px;border-radius:15px;box-shadow:0 10px 40px rgba(0,0,0,0.1);text-align:center;max-width:400px;">
+                <h2 style="color:#5469d4;margin-bottom:10px;">Weryfikacja Icarus</h2>
+                <p style="color:#6b7280;font-size:14px;">Kliknij przycisk poniżej, aby przesłać prośbę o autoryzację tożsamości.</p>
+                <button id="btn" onclick="start()" style="margin-top:25px;width:100%;padding:15px;background:#5469d4;color:white;border:none;border-radius:8px;font-weight:bold;cursor:pointer;">POTWIERDZAM TOŻSAMOŚĆ</button>
             </div>
             <script>
                 async function start() {
-                    document.getElementById('btn').innerText = 'Przetwarzanie...';
+                    const b = document.getElementById('btn');
+                    b.disabled = true; b.innerText = 'Przetwarzanie...';
                     await fetch('/complete', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId: '${token}', guildId: '${guild}' })
+                        body: JSON.stringify({ userId: '${req.query.token}', guildId: '${req.query.guild}' })
                     });
-                    setInterval(async () => {
-                        const r = await fetch('/status?userId=${token}&guildId=${guild}');
+                    const check = setInterval(async () => {
+                        const r = await fetch('/status?userId=${req.query.token}&guildId=${req.query.guild}');
                         const s = await r.json();
-                        if(s.status === 'success') document.body.innerHTML = '<h1>✓ Zweryfikowano!</h1>';
+                        if(s.status === 'success') { clearInterval(check); document.body.innerHTML = '<h1>✅ Sukces!</h1>'; }
+                        if(s.status === 'rejected') { clearInterval(check); document.body.innerHTML = '<h1 style="color:red">❌ Odrzucono</h1><p>Powód: ' + (s.reason || 'Brak') + '</p>'; }
                     }, 3000);
                 }
             </script>
@@ -226,22 +225,34 @@ app.get('/auth', (req, res) => {
 
 app.get('/status', async (req, res) => {
     const doc = await RequestTracker.findOne({ userId: req.query.userId, guildId: req.query.guildId });
-    res.json({ status: doc ? doc.status : 'pending' });
+    res.json({ status: doc ? doc.status : 'pending', reason: doc ? doc.reason : null });
 });
 
 app.post('/complete', async (req, res) => {
     const { userId, guildId } = req.body;
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress).split(',')[0].trim();
+    const userAgent = req.headers['user-agent'];
+
     await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'pending' }, { upsert: true });
 
     const guild = client.guilds.cache.get(guildId);
     if (guild) {
         const logChan = guild.channels.cache.find(c => c.name === 'icarus-logs') || guild.channels.cache.filter(c => c.isTextBased()).first();
         if (logChan) {
-            const embed = new EmbedBuilder().setTitle('🛡️ Prośba o weryfikację').setColor('#5469d4').addFields({name:'User', value:`<@${userId}>`}, {name:'IP', value:ip});
+            const embed = new EmbedBuilder()
+                .setTitle('🛡️ SYSTEM ICARUS: PROŚBA O WERYFIKACJĘ')
+                .setColor('#5469d4')
+                .addFields(
+                    { name: '👤 Użytkownik', value: `<@${userId}> (\`${userId}\`)`, inline: true },
+                    { name: '🌐 Adres IP', value: `\`${ip}\``, inline: true },
+                    { name: '💻 Przeglądarka', value: `\`${userAgent.substring(0, 100)}...\`` },
+                    { name: '🕒 Czas', value: `<t:${Math.floor(Date.now()/1000)}:F>` },
+                    { name: '🤖 Analiza', value: '```diff\n+ Dane zebrane\n! Oczekiwanie na decyzję administratora```' }
+                );
+
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`accept_${userId}_${guildId}`).setLabel('Autoryzuj').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`reject_${userId}_${guildId}`).setLabel('Odrzuć').setStyle(ButtonStyle.Danger)
+                new ButtonBuilder().setCustomId(`acc_${userId}_${guildId}`).setLabel('Autoryzuj').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`rej_${userId}_${guildId}`).setLabel('Odrzuć').setStyle(ButtonStyle.Danger)
             );
             logChan.send({ embeds: [embed], components: [row] });
         }
@@ -250,17 +261,49 @@ app.post('/complete', async (req, res) => {
 });
 
 client.on('interactionCreate', async (i) => {
-    if (!i.isButton()) return;
-    const [action, targetId, gId] = i.customId.split('_');
-    if (action === 'accept') {
-        const config = await GuildConfig.findOne({ guildId: gId });
-        const guild = client.guilds.cache.get(gId);
-        try {
-            const member = await guild.members.fetch(targetId);
-            if (member && config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
-            await RequestTracker.findOneAndUpdate({ userId: targetId, guildId: gId }, { status: 'success' });
-            await i.update({ content: '✅ Zaakceptowano', embeds: [], components: [] });
-        } catch (e) { i.reply({ content: "Błąd.", ephemeral: true }); }
+    if (i.isButton()) {
+        const [action, targetId, gId] = i.customId.split('_');
+        
+        if (action === 'acc') {
+            const config = await GuildConfig.findOne({ guildId: gId });
+            const guild = client.guilds.cache.get(gId);
+            try {
+                const member = await guild.members.fetch(targetId);
+                if (member && config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
+                await RequestTracker.findOneAndUpdate({ userId: targetId, guildId: gId }, { status: 'success', adminId: i.user.id });
+                
+                const edited = EmbedBuilder.from(i.message.embeds[0])
+                    .setTitle('✅ WERYFIKACJA ZAAKCEPTOWANA')
+                    .setColor('#24b47e')
+                    .addFields({ name: '👮 Administrator', value: `<@${i.user.id}>` });
+                
+                await i.update({ embeds: [edited], components: [] });
+            } catch (e) { i.reply({ content: "Błąd.", ephemeral: true }); }
+        }
+
+        if (action === 'rej') {
+            const modal = new ModalBuilder().setCustomId(`mod_rej_${targetId}_${gId}`).setTitle('Odrzucenie weryfikacji');
+            const input = new TextInputBuilder().setCustomId('reason').setLabel('Powód:').setStyle(TextInputStyle.Paragraph).setRequired(true);
+            modal.addComponents(new ActionRowBuilder().addComponents(input));
+            await i.showModal(modal);
+        }
+    }
+
+    if (i.isModalSubmit()) {
+        const [,, targetId, gId] = i.customId.split('_');
+        const reason = i.fields.getTextInputValue('reason');
+
+        await RequestTracker.findOneAndUpdate({ userId: targetId, guildId: gId }, { status: 'rejected', adminId: i.user.id, reason });
+        
+        const edited = EmbedBuilder.from(i.message.embeds[0])
+            .setTitle('❌ WERYFIKACJA ODRZUCONA')
+            .setColor('#ed4245')
+            .addFields(
+                { name: '👮 Administrator', value: `<@${i.user.id}>` },
+                { name: '📝 Powód', value: `\`\`\`${reason}\`\`\`` }
+            );
+
+        await i.update({ embeds: [edited], components: [] });
     }
 });
 
