@@ -88,18 +88,21 @@ app.get('/', (req, res) => {
                 <h1>ICARUS SYSTEM</h1>
                 <p style="color: #a3acb9; margin-bottom: 30px;">Security & Management Portal</p>
                 <a href="/login" class="btn btn-verify">Autoryzuj Urządzenie</a>
-                <a href="/dashboard" class="btn btn-dash">Panel Zarządzania</a>
+                <a href="/login" class="btn btn-dash">Panel Zarządzania</a>
             </div>
         </body>
         </html>
     `);
 });
 
-// 2. OAUTH2 LOGIN (Z NAPRAWIONYM PRZEKIEROWANIEM)
+// 2. OAUTH2 LOGIN (KLUCZOWA NAPRAWA PRZEKIEROWANIA)
 app.get('/login', (req, res, next) => {
-    // Jeśli w URL jest guild, zapamiętujemy to w "state" (bezpieczne przekierowanie)
+    // Sprawdzamy, czy w zapytaniu jest ID serwera (link od bota)
     const guildId = req.query.guild;
-    const state = guildId ? Buffer.from(JSON.stringify({ guildId })).toString('base64') : 'dashboard';
+    
+    // Kodujemy cel podróży do parametru "state"
+    const target = guildId ? { type: 'verify', guildId } : { type: 'dashboard' };
+    const state = Buffer.from(JSON.stringify(target)).toString('base64');
     
     passport.authenticate('discord', { state })(req, res, next);
 });
@@ -107,15 +110,20 @@ app.get('/login', (req, res, next) => {
 app.get('/auth/callback', passport.authenticate('discord', { failureRedirect: '/' }), (req, res) => {
     const stateData = req.query.state;
     
-    if (stateData && stateData !== 'dashboard') {
+    if (stateData) {
         try {
-            const parsed = JSON.parse(Buffer.from(stateData, 'base64').toString());
-            if (parsed.guildId) {
-                return res.redirect(`/auth?token=${req.user.id}&guild=${parsed.guildId}`);
+            const decoded = JSON.parse(Buffer.from(stateData, 'base64').toString());
+            
+            // Jeśli to była weryfikacja, wysyłamy na stronę /auth z parametrami
+            if (decoded.type === 'verify' && decoded.guildId) {
+                return res.redirect(`/auth?token=${req.user.id}&guild=${decoded.guildId}`);
             }
-        } catch (e) { console.error("Błąd parsowania state", e); }
+        } catch (e) {
+            console.error("Błąd dekodowania state:", e);
+        }
     }
     
+    // W każdym innym przypadku (brak state lub typ dashboard) -> Panel
     res.redirect('/dashboard');
 });
 
@@ -126,7 +134,7 @@ app.get('/dashboard', async (req, res) => {
     const botGuilds = client.guilds.cache;
     const userGuilds = req.user.guilds;
 
-    // FILTRUJEMY: Tylko serwery, gdzie użytkownik jest WŁAŚCICIELEM
+    // Filtracja: Tylko serwery gdzie użytkownik jest właścicielem (owner: true)
     let cardsHtml = userGuilds.filter(g => g.owner === true).map(g => {
         const hasBot = botGuilds.has(g.id);
         const btnClass = hasBot ? "btn-manage" : "btn-add";
@@ -153,12 +161,11 @@ app.get('/dashboard', async (req, res) => {
                 .btn { display: block; padding: 12px; margin-top: 20px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 11px; }
                 .btn-manage { background: #5469d4; color: white; }
                 .btn-add { background: #24b47e; color: white; }
-                .name { margin-top: 15px; font-weight: 600; color: #e3e8ee; }
             </style>
         </head>
         <body>
             <div style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px;">
-                <h2>Witaj, ${req.user.username} (Panel Właściciela)</h2>
+                <h2>Witaj, ${req.user.username}</h2>
                 <a href="/" style="color: #a3acb9; text-decoration: none;">Wyloguj</a>
             </div>
             <div class="grid">${cardsHtml || '<p style="text-align:center; width:100%">Nie jesteś właścicielem żadnego serwera.</p>'}</div>
@@ -170,13 +177,11 @@ app.get('/dashboard', async (req, res) => {
 // 4. PANEL ZARZĄDZANIA
 app.get('/manage/:guildId', async (req, res) => {
     if (!req.isAuthenticated()) return res.redirect('/login');
-    
-    // Sprawdzenie czy użytkownik jest właścicielem tego konkretnego serwera
     const userGuild = req.user.guilds.find(g => g.id === req.params.guildId);
-    if (!userGuild || userGuild.owner !== true) return res.send("Dostęp tylko dla właściciela serwera.");
+    if (!userGuild || userGuild.owner !== true) return res.send("Brak uprawnień właściciela.");
 
     const guild = client.guilds.cache.get(req.params.guildId);
-    if (!guild) return res.send("Bot nie jest na tym serwerze.");
+    if (!guild) return res.send("Bot nie jest na serwerze.");
 
     let config = await GuildConfig.findOne({ guildId: guild.id }) || { verifyRoleId: '' };
 
@@ -194,9 +199,9 @@ app.get('/manage/:guildId', async (req, res) => {
             <div class="box">
                 <h2>Ustawienia: ${guild.name}</h2>
                 <form action="/save/${guild.id}" method="POST">
-                    <label>ID Roli Weryfikacyjnej (np. @Zweryfikowany)</label>
-                    <input type="text" name="roleId" value="${config.verifyRoleId}" placeholder="Wklej ID roli">
-                    <button type="submit">ZAPISZ ZMIANY</button>
+                    <label>ID Roli Weryfikacyjnej</label>
+                    <input type="text" name="roleId" value="${config.verifyRoleId}" placeholder="ID Roli">
+                    <button type="submit">ZAPISZ</button>
                 </form>
             </div>
         </body>
@@ -210,7 +215,7 @@ app.post('/save/:guildId', async (req, res) => {
     res.redirect('/dashboard');
 });
 
-// 5. WERYFIKACJA (STRONA DLA UŻYTKOWNIKA)
+// 5. WERYFIKACJA
 app.get('/auth', (req, res) => {
     const { token, guild } = req.query;
     if (!token || !guild) return res.redirect('/');
@@ -270,7 +275,6 @@ app.get('/status', async (req, res) => {
 app.post('/complete', async (req, res) => {
     const { userId, guildId } = req.body;
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress).split(',')[0].trim();
-    
     await RequestTracker.findOneAndUpdate({ userId, guildId }, { status: 'pending' }, { upsert: true });
 
     const guild = client.guilds.cache.get(guildId);
@@ -299,7 +303,7 @@ client.on('interactionCreate', async (i) => {
             if (member && config?.verifyRoleId) await member.roles.add(config.verifyRoleId);
             await RequestTracker.findOneAndUpdate({ userId: targetId, guildId: gId }, { status: 'success' });
             await i.update({ content: '✅ Zaakceptowano', embeds: [], components: [] });
-        } catch (e) { i.reply({ content: "Błąd: Nie znaleziono użytkownika.", ephemeral: true }); }
+        } catch (e) { i.reply({ content: "Błąd użytkownika.", ephemeral: true }); }
     }
     if (action === 'reject') {
         await RequestTracker.findOneAndUpdate({ userId: targetId, guildId: gId }, { status: 'rejected' });
