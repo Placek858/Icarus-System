@@ -8,7 +8,7 @@ const MongoStore = require('connect-mongo');
 const path = require('path');
 
 // --- KONFIGURACJA I MODELE ---
-const OWNER_ID = "TWÓJ_ID_DISCORD";
+const OWNER_ID = "1131510639769178132";
 const MASTER_PIN = "15052021";
 
 const GuildSchema = new mongoose.Schema({
